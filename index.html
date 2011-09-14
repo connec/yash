@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>YASH</title>
+    <style>
+      html, body {
+        margin: 0;
+        padding: 0;
+      }
+    </style>
+    <link rel="stylesheet" href="jquery.yash.css">
+    <script type="text/javascript" src="jquery.js"></script>
+    <script type="text/javascript" src="jquery.yash.js"></script>
+    <script type="text/javascript" src="yash.syntax.php.js"></script>
+    <script type="text/javascript">
+      window.onload = function() {
+        $('#editor').yash();
+      };
+    </script>
+  </head>
+  <body>
+    <div id="editor">&lt;?php
+
+/**
+ * parser.php
+ */
+
+namespace tsml;
+
+use \Exception;
+
+/**
+ * The Parser class constructs a parse tree from a TSML source document.
+ */
+class Parser {
+  
+  /**
+   * A flag indicating the next line is expected to have more indentation.
+   */
+  const EXPECT_MORE = 1;
+  
+  /**
+   * A flag indicating the next line is expected to have the same indentation.
+   */
+  const EXPECT_SAME = 2;
+  
+  /**
+   * A flag indicating the next line is expected to have less indentation.
+   */
+  const EXPECT_LESS = 4;
+  
+  /**
+   * A convenience flag indicating the next line can have anu indentation.
+   */
+  const EXPECT_ANY = 7;
+  
+  /**
+   * A regular expression for matching a valid tag name.
+   */
+  const RE_TAG = '/^\+([a-z][_:a-z0-9]*)/i';
+  
+  /**
+   * A regular expression for matching a valid id.
+   */
+  const RE_ID = '/^#([_a-z][-_:a-z0-9]*)/i';
+  
+  /**
+   * A regular expression for matching a valid class name.
+   */
+  const RE_CLASS = '/^\.(-?[_a-z][-_a-z0-9]*)/i';
+  
+  /**
+   * A regular expression for matching a valid attribute/value.
+   */
+  const RE_ATTR = '/^([_:a-z][-_:.a-z0-9]*)(?:=(["\'])(\\\\.|(?!\\\\|\\2).*)\\2)?(?:\s|$)/i';
+  
+  /**
+   * A regular expression for matching start-of-line escape sequences.
+   */
+  const RE_ESCAPES = '/^\\\\(\s|[+])/';
+  
+  /**
+   * The options this instance is using.
+   */
+  protected $options = [];
+  
+  /**
+   * The source document.  An array of lines when using parse_string, a file
+   * handle when using parse_file.
+   */
+  protected $source;
+  
+  /**
+   * The root of the parse tree.
+   */
+  protected $parse_tree;
+  
+  /**
+   * The current context in the parse tree.
+   */
+  protected $context;
+  
+  /**
+   * The line number currently being parsed.
+   */
+  protected $line_number;
+  
+  /**
+   * The line currently being parsed.
+   */
+  protected $line;
+  
+  /**
+   * The current level of indentation.
+   */
+  protected $indent_level;
+  
+  /**
+   * The parser's expected about the next line's indentation level.
+   */
+  protected $allow_child;
+  
+  /**
+   * Instantiate a Parser with given options.
+   */
+  public function __construct(array $options = []) {
+    
+    $this-&gt;options = array_merge($this-&gt;options, $options);
+    
+  }
+  
+  /**
+   * Parses a TSML string.
+   */
+  public function parse_string($tsml_string) {
+    
+    $tsml_string = str_replace(["\r\n", "\r"], "\n", $tsml_string);
+    $this-&gt;source = explode("\n", $tsml_string);
+    $this-&gt;parse();
+    $this-&gt;source = [];
+    return $this-&gt;parse_tree;
+    
+  }
+  
+  /**
+   * Parses a TSML file.
+   */
+  public function parse_file($tsml_file) {
+    
+    $this-&gt;source = fopen($tsml_file, 'r');
+    $this-&gt;parse();
+    fclose($this-&gt;source);
+    return $this-&gt;parse_tree;
+    
+  }
+  
+  /**
+   * Parses stored TSML source.
+   */
+  protected function parse() {
+    
+    $this-&gt;reset();
+    while($this-&gt;get_line()) {
+      if(!trim($this-&gt;line)) {
+        $this-&gt;allow_child = false;
+        continue;
+      }
+      
+      $this-&gt;handle_indent();
+      
+      if(strpos($this-&gt;line, '+#') === 0)
+        $this-&gt;handle_loud_comment();
+      elseif($this-&gt;line[0] == '+')
+        $this-&gt;handle_tag();
+      elseif(strpos($this-&gt;line, '-#') === 0)
+        continue;
+      else
+        $this-&gt;handle_text();
+    }
+    
+  }
+  
+  /**
+   * Resets the parser.
+   */
+  protected function reset() {
+    
+    $this-&gt;parse_tree = new RootNode(-1);
+    $this-&gt;context = $this-&gt;parse_tree;
+    $this-&gt;line_number = 0;
+    $this-&gt;indent_string = '';
+    $this-&gt;indent_level = 0;
+    $this-&gt;allow_child = false;
+    
+    if(is_resource($this-&gt;source))
+      rewind($this-&gt;source);
+    else
+      reset($this-&gt;source);
+    
+  }
+  
+  /**
+   * Gets the next line from the source.
+   */
+  protected function get_line() {
+    
+    $this-&gt;line_number ++;
+    
+    if(is_resource($this-&gt;source)) {
+      if($this-&gt;line = rtrim(fgets($this-&gt;source), "\r\n"))
+        return true;
+    } else {
+      if(is_array($this-&gt;line = each($this-&gt;source))) {
+        $this-&gt;line = $this-&gt;line[1];
+        return true;
+      }
+    }
+    
+    $this-&gt;line = '';
+    return false;
+    
+  }
+  
+  /**
+   * Adjusts the indentation level and context for the current line.
+   */
+  protected function handle_indent() {
+    
+    preg_match('/^\s*/', $this-&gt;line, $matches);
+    
+    if(str_replace('  ', '', $matches[0]))
+      $this-&gt;exception('Invalid indentation');
+    $new_indent_level = substr_count($matches[0], '  ');
+    
+    if($new_indent_level &gt; $this-&gt;indent_level) {
+      if($new_indent_level - $this-&gt;indent_level &gt; 1)
+        $this-&gt;exception('Indentation level increased by more than one');
+      
+      if(!$this-&gt;allow_child)
+        $this-&gt;exception('Unexpected indentation level increase, previous line does not allow children');
+      
+      if(!($this-&gt;context = $this-&gt;context-&gt;last_child()))
+        $this-&gt;exception('No child node for context update');
+    } elseif($new_indent_level &lt; $this-&gt;indent_level) {
+      for($i = 0, $j = $this-&gt;indent_level - $new_indent_level; $i &lt; $j; $i ++) {
+        if(!($this-&gt;context = $this-&gt;context-&gt;parent()))
+          $this-&gt;exception('No parent node for context update');
+      }
+    }
+    
+    $this-&gt;line = ltrim($this-&gt;line);
+    $this-&gt;indent_level = $new_indent_level;
+    $this-&gt;allow_child = false;
+    
+  }
+  
+  /**
+   * Handles a loud comment.
+   */
+  protected function handle_loud_comment() {
+    
+    $node = new LoudCommentNode($this-&gt;line_number);
+    $node-&gt;content = trim(substr($this-&gt;line, 2));
+    $this-&gt;context-&gt;add_child($node);
+    
+    $this-&gt;indent_expected = static::EXPECT_SAME | static::EXPECT_LESS;
+    
+  }
+  
+  /**
+   * Handles a tag line.
+   */
+  protected function handle_tag() {
+    
+    $line = $this-&gt;line;
+    $node = new TagNode($this-&gt;line_number);
+    
+    if(!preg_match(static::RE_TAG, $line, $matches))
+      $this-&gt;exception('Invalid tag name');
+    $line = (string) substr($line, strlen($matches[0]));
+    $node-&gt;tag_name = $matches[1];
+    
+    if($line and $line[0] == '#') {
+      if(!preg_match(static::RE_ID, $line, $matches))
+        $this-&gt;exception('Invalid id');
+      $line = (string) substr($line, strlen($matches[0]));
+      $node-&gt;id = $matches[1];
+    }
+    
+    while($line and $line[0] == '.') {
+      if(!preg_match(static::RE_CLASS, $line, $matches))
+        $this-&gt;exception('Invalid class name');
+      $line = (string) substr($line, strlen($matches[0]));
+      $node-&gt;classes[] = $matches[1];
+    }
+    
+    if($line and $line[0] == '[') {
+      if($line[strlen($line) - 1] != ']')
+        $this-&gt;exception('No closing `]` before end-of-line');
+      $line = substr($line, 1, -1);
+      
+      while($line = trim($line)) {
+        if(!preg_match(static::RE_ATTR, $line, $matches))
+          $this-&gt;exception('Invalid attribute');
+        $line = (string) substr($line, strlen($matches[0]));
+        if(!isset($matches[2]) or ! $matches[2])
+          $node-&gt;attributes[$matches[1]] = true;
+        else
+          $node-&gt;attributes[$matches[1]] = str_replace("\\$matches[2]", $matches[2], $matches[3]);
+      }
+    }
+    
+    if($line)
+      $this-&gt;exception('Expected end-of-line after tag definition');
+    
+    $this-&gt;context-&gt;add_child($node);
+    $this-&gt;allow_child = true;
+    
+  }
+  
+  /**
+   * Handles a text line.
+   */
+  protected function handle_text() {
+    
+    $node = new TextNode($this-&gt;line_number);
+    $node-&gt;content = preg_replace(static::RE_ESCAPES, '$1', $this-&gt;line);
+    $this-&gt;context-&gt;add_child($node);
+    
+    $this-&gt;indent_expected = static::EXPECT_SAME | static::EXPECT_LESS;
+    
+  }
+  
+  /**
+   * Throws an exception, appending the line number.
+   */
+  protected function exception($message) {
+    
+    throw new Exception('ParseError: ' . $message . ' - line ' . $this-&gt;line_number);
+    
+  }
+  
+}
+
+require 'node.php';
+require 'root_node.php';
+require 'tag_node.php';
+require 'text_node.php';
+require 'loud_comment_node.php';
+require 'generator.php';
+
+$tsml = &lt;&lt;&lt;TSML
++# The main navigation
++nav
+TSML;
+
+$parser = new Parser;
+$tree = $parser-&gt;parse_string($tsml);
+$tree-&gt;print_tree();
+
+$generator = new Generator;
+$html = $generator-&gt;generate($tree);
+
+echo htmlentities($html);
+
+?&gt;</div>
+  </body>
+</html>

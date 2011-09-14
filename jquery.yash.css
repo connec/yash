@@ -1,0 +1,102 @@
+.yash-container {
+  position: relative;
+  font-family: monospace;
+  color: white;
+}
+
+.yash-ruler {
+  position: absolute;
+  top: -1000px;
+}
+
+.yash-line-numbers {
+  position: relative;
+  float: left;
+  margin: 0;
+  padding: 0 5px;
+  text-align: right;
+  background-color: #222;
+  list-style: none;
+  color: #ccc;
+}
+
+.yash-editor {
+  position: relative;
+  float: left;
+  white-space: pre;
+  word-wrap: normal;
+  background-color: #333;
+  outline: none;
+}
+
+.yash-editor div {
+  padding: 0 5px;
+}
+
+.yash-current-line {
+  background-color: #444;
+}
+
+.yash-script-control.yash-keyword {
+  color: crimson;
+}
+
+.yash-comment {
+  color: mediumslateblue;
+}
+
+.yash-string.yash-literal,.yash-shell-command {
+  color: forestgreen;
+}
+
+.yash-shell-command {
+  background-color: black;
+}
+
+.yash-number.yash-literal {
+  color: plum;
+}
+
+.yash-boolean.yash-literal {
+  color: brown;
+}
+
+.yash-keyword.yash-generic {
+  color: cornflowerblue;
+}
+
+.yash-keyword.yash-control {
+  color: orange;
+}
+
+.yash-function.yash-construct {
+  color: darkcyan;
+}
+
+.yash-variable {
+  color: lightsteelblue;
+}
+
+.yash-operator {
+  color: gray;
+}
+
+.yash-punctuation {
+  color: darkgray;
+}
+
+.yash-function.yash-constant {
+  color: dodgerblue;
+}
+
+.yash-namespace.yash-constant {
+  color: deepskyblue;
+}
+
+.yash-generic.yash-constant {
+  color: darkolivegreen;
+}
+
+.yash-class.yash-constant {
+  color: cadetblue;
+}
